@@ -1,4 +1,5 @@
 import numpy as np
+import awkward as ak
 import time
 
 etabins=np.array([-5.191, -4.889, -4.716, -4.538, -4.363, -4.191, -4.013, -3.839, -3.664, -3.489, -3.314, -3.139, -2.964,
@@ -22,16 +23,16 @@ def getWeights(data, MC):
     return weight
 
 def calcGeometricOffset(rCone, E, f_id, mu, mucut):
-    E = (E.flatten()).reshape(len(E),nEta)[mu>mucut]
-    f_id = (f_id.flatten()).reshape(len(f_id),nEta)[mu>mucut]
+    E = ak.to_numpy(ak.flatten(E)).reshape(len(E),nEta)[mu>mucut]
+    f_id = ak.to_numpy(ak.flatten(f_id)).reshape(len(f_id),nEta)[mu>mucut]
     if (len(f_id)!=len(E)):
         print("Error")
     area = 2* np.pi * (etabins[1:] - etabins[:-1])
     return E*f_id*np.pi*rCone*rCone / 255. / np.cosh(etaC) / area
 
 def calcOffsetRC(rCone, E, f_id):
-    E = (E.flatten()).reshape(len(E),nEta)
-    f_id = (f_id.flatten()).reshape(len(f_id),nEta)
+    E = ak.to_numpy(ak.flatten(E)).reshape(len(E),nEta)
+    f_id = ak.to_numpy(ak.flatten(f_id)).reshape(len(f_id),nEta)
     offset_id = np.zeros((len(E), nEta))
     for ieta in range(len(etaC)):
         # first calculating area of the jetCone depending on etaC
