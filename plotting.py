@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from matplotlib import gridspec
 from scipy import optimize
 import numpy as np
+import math
 
 etabins=np.array([-5.191, -4.889, -4.716, -4.538, -4.363, -4.191, -4.013, -3.839, -3.664, -3.489, -3.314, -3.139, -2.964,
          -2.853, -2.65, -2.5, -2.322, -2.172, -2.043, -1.93, -1.83, -1.74, -1.653, -1.566, -1.479, -1.392, -1.305,
@@ -15,6 +16,188 @@ etabins=np.array([-5.191, -4.889, -4.716, -4.538, -4.363, -4.191, -4.013, -3.839
          3.139, 3.314, 3.489, 3.664, 3.839, 4.013, 4.191, 4.363, 4.538, 4.716, 4.889, 5.191])
 nEta = 82
 etaC=0.5*(etabins[:-1]+etabins[1:])
+
+def plotHist(output, variable, xlabel):
+    scales = output[variable].integrate(variable).values()
+    data_scale = scales['Data',]
+    mc_scale = scales['MC',]
+    scales['Data'] = 1/data_scale
+    scales['MC'] = 1/mc_scale
+    del scales['Data',]
+    del scales['MC',]
+    output[variable].scale(scales, axis='dataset')
+    fig, ax = plt.subplots(figsize=(5, 5))
+    ax = hist.plot1d(output[variable],overlay='dataset')
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel('')
+    scales['Data'] = data_scale
+    scales['MC'] = mc_scale
+    output[variable].scale(scales, axis='dataset')
+    fig.savefig("plots/{}.pdf".format(variable, bbox_inches='tight'))
+
+def plotProfile(output, x_var, hist_2d, xlow, xhigh, xlabel, ylabel):
+    fig, (ax, rax) = plt.subplots(
+        nrows=2,
+        ncols=1,
+        figsize=(5,5),
+        gridspec_kw={"height_ratios": (3, 1)},
+        sharex=True
+    )
+    fig.subplots_adjust(hspace=.07)
+    num1 = output[hist_2d].integrate('dataset','Data') 
+    denom1 = output[x_var].integrate('dataset','Data') 
+    hist.plotratio(num1, denom1, unc='num', ax=ax,
+                   error_opts={'marker':'o', 'markersize': 3.,
+                               'markeredgecolor':'k', 'color':'k',
+                               'elinewidth': 0.5, },label='Data', clear=False,)
+    num2 = output[hist_2d].integrate('dataset','MC') 
+    denom2 = output[x_var].integrate('dataset','MC') 
+    hist.plotratio(num2, denom2, unc='num',ax=ax,
+                   error_opts={'marker':'o', 'markersize': 3.,
+                               'markeredgecolor':'r', 'color':'none',
+                               'elinewidth': 1.0, },label='MC',clear=False)
+    ax.set_xlim(xlow, xhigh)
+    ax.set_ylim(0, 60)
+    rax.set_ylim(0.7, 1.3)
+    ax.set_xlabel(None)
+    rax.set_xlabel(xlabel)
+    rax.set_ylabel('Data/MC')
+    ax.set_ylabel(ylabel)
+    ax.grid(color='b', ls = '-.', lw = 0.25)
+    ax.legend()
+    nbins = len(output[x_var].values()['Data',])
+    bin_center = 0.5*(np.linspace(0,nbins/2,nbins+1)[:-1]+np.linspace(0,nbins/2,nbins+1)[1:])
+    im = rax.scatter(bin_center,(num1.values()[()]*denom2.values()[()])/(num2.values()[()]*denom1.values()[()]),
+                     s=5, marker='o', facecolors='none', edgecolor='k')
+    im = rax.plot(bin_center, np.ones(len(bin_center)), '--', color='gray')
+    fig.savefig("plots/{}.pdf".format(hist_2d, bbox_inches='tight'))
+
+def func(x, a, b, c):
+    return (a * x**2) + (b*x) + c
+
+def fitProfile(output, x_var, y_var, norm_var, hist_2d, xlabel, ylabel, nbin, xmin, xmax):
+    '''Need to add text in the plot from fitting and display eta range.'''
+    fig, (ax, rax) = plt.subplots(
+        nrows=2,
+        ncols=1,
+        figsize=(5,5),
+        gridspec_kw={"height_ratios": (3, 1)},
+        sharex=True
+    )
+    fig.subplots_adjust(hspace=.07)
+    
+    eta_range = slice(etabins[nbin], etabins[nbin+1])
+    offset_vs_eta_data = output[y_var].integrate('dataset','Data').integrate('eta',eta_range )
+    norm_data = ((output[norm_var].integrate('dataset','Data')).integrate('eta',eta_range ).integrate('flavor','chm')).values()[()]
+    offset_v_eta_data = (offset_vs_eta_data.remove(["lep","untrk", 'chm'],"flavor")).integrate('flavor')
+
+    offset_vs_eta_mc = output[y_var].integrate('dataset','MC').integrate('eta',eta_range )
+    norm_mc = (((output[norm_var].integrate('dataset','MC')).integrate('eta',eta_range ).integrate('flavor','chm')).values()[()])
+    offset_v_eta_mc = (offset_vs_eta_mc.remove(["lep","untrk", 'chm'],"flavor")).integrate('flavor')
+    
+    '''converting mu to rho for x axis values'''
+    num1 = (output['p_rho_nPU']).integrate('dataset','Data') 
+    denom1 = (output['nPU']).integrate('dataset','Data') 
+    x_data = np.where(denom1.values()[()]>0., num1.values()[()]/denom1.values()[()], 0)
+    
+    num2 = (output['p_rho_nPU']).integrate('dataset','MC') 
+    denom2 = (output['nPU']).integrate('dataset','MC') 
+    x_mc = np.where(denom2.values()[()]>0., num2.values()[()]/denom2.values()[()], 0)
+    
+    nbins = len(output[x_var].values()['Data',])
+    bin_center = (0.5*(np.linspace(0,nbins/2,nbins+1)[:-1]+np.linspace(0,nbins/2,nbins+1)[1:])).astype(int)
+    yvals_d = (offset_v_eta_data.values()[()]* (1/norm_data))
+    yvals_m = (offset_v_eta_mc.values()[()]* (1/norm_mc))
+    yerr_d = (offset_v_eta_data.values(sumw2=True)[()])[1]* (1/norm_data)
+    yerr_m = (offset_v_eta_mc.values(sumw2=True))[()][1]* (1/norm_mc)
+    im = ax.scatter(x_data, yvals_d, label='Data', s=15, facecolors='k', edgecolors='k')
+    im = ax.scatter(x_mc, yvals_m, label='MC', s=15, facecolors='none', edgecolors='r')
+    
+    min_xlim=np.min(x_data[2*xmin:2*xmax+1]) if np.min(x_data[2*xmin:2*xmax+1])<np.min(x_mc[2*xmin:2*xmax+1]) else np.min(x_mc[2*xmin:2*xmax+1])
+    max_xlim=np.max(x_data[2*xmin:2*xmax+1]) if np.max(x_data[2*xmin:2*xmax+1])>np.max(x_mc[2*xmin:2*xmax+1]) else np.max(x_mc[2*xmin:2*xmax+1])
+    ax.set_xlim(min_xlim, max_xlim)
+    
+    ymax1 = np.max(yvals_d[int(2*xmin):int(2*xmax)+1])
+    ymax2 = np.max(yvals_m[int(2*xmin):int(2*xmax)+1])
+    ymax = ymax1 if(ymax1>ymax2) else ymax2
+    ax.set_ylim(0, 1.2*ymax)
+    ax.set_ylabel(ylabel)
+
+    im = rax.scatter(x_data, yvals_d/yvals_m,
+                     facecolors='none', edgecolors='k', s=15)
+    im = rax.plot(bin_center, np.ones(len(bin_center)), '--', color='k')
+    rax.set_ylim(0.5, 1.6)
+    rax.set_xlabel(xlabel)
+    rax.set_ylabel('Data/MC')
+    
+    
+    d_params= optimize.curve_fit(func, x_data[int(2*xmin):int(2*xmax)+1],
+                                                   yvals_d[int(2*xmin):int(2*xmax)+1],
+                                                   p0=[2, 2, 2], full_output=True)
+    m_params= optimize.curve_fit(func, x_mc[int(2*xmin):int(2*xmax)+1],
+                                                       yvals_m[int(2*xmin):int(2*xmax)+1],
+                                                       p0=[2, 2, 2], full_output=True)
+    d_err = np.sqrt(np.diag(d_params[1]))
+    m_err = np.sqrt(np.diag(m_params[1]))
+    
+    chisq_d = np.sum(((yvals_d[int(2*xmin):int(2*xmax)+1] -
+                    func( bin_center[int(2*xmin):int(2*xmax)+1], d_params[0][0], d_params[0][1], d_params[0][2]))
+                     /yerr_d[int(2*xmin):int(2*xmax)+1])**2)
+    chisq_m = np.sum(((yvals_m[int(2*xmin):int(2*xmax)+1] -
+                    func( bin_center[int(2*xmin):int(2*xmax)+1], m_params[0][0], m_params[0][1], m_params[0][2]))
+                     /yerr_m[int(2*xmin):int(2*xmax)+1])**2)
+
+    ax.plot(bin_center[int(xmin):int(2*xmax)+1], func( bin_center[int(xmin):int(2*xmax)+1], d_params[0][0], d_params[0][1], d_params[0][2]), 'k')
+    ax.plot(bin_center[int(xmin):int(2*xmax)+1], func( bin_center[int(xmin):int(2*xmax)+1], m_params[0][0], m_params[0][1], m_params[0][2]), 'r')
+    
+    ax.text(min_xlim, 1.21*ymax, 'CMS', {'color': 'k', 'fontsize': 12, 'fontweight':'black', 'fontfamily':'sans'}, va="bottom", ha="left")
+    ax.text(max_xlim, 1.21*ymax, r'AK4 PFchs {} $\leq$ $\eta$ $\leq$ {}'.format(etabins[nbin],etabins[nbin+1]), {'color': 'k', 'fontsize': 10}, va="bottom", ha="right")
+    ax.text(1.3*min_xlim, 1.05*ymax, 'Data', {'color': 'k', 'fontsize': 10}, va="top", ha="left", weight='bold')
+    #ax.text(1.3*min_xlim, 1.1*ymax, 'Data', {'color': 'k', 'fontsize': 10}, va="top", ha="left", weight='bold')
+    #ax.text(1.3*min_xlim, 1.05*ymax, r'$\chi^2/ndof = {:1.3f}/{}$ '.format(12.3456,len(yvals_d[int(xmin):int(xmax)])-1), {'color': 'k', 'fontsize': 9}, va="top", ha="left")
+    ax.text(1.3*min_xlim, 0.98*ymax, r'p0 = {:1.4f} $\pm$ {:1.4f}'.format(d_params[0][2], d_err[2]), {'color': 'k', 'fontsize': 9}, va="top", ha="left")
+    ax.text(1.3*min_xlim, 0.93*ymax, r'p1 = {:1.4f} $\pm$ {:1.4f}'.format(d_params[0][1], d_err[1]), {'color': 'k', 'fontsize': 9}, va="top", ha="left")
+    ax.text(1.3*min_xlim, 0.88*ymax, r'p2 = {:1.4f} $\pm$ {:1.4f}'.format(d_params[0][0], d_err[0]), {'color': 'k', 'fontsize': 9}, va="top", ha="left")
+    ax.text(1.3*min_xlim, 0.77*ymax, 'MC', {'color': 'r', 'fontsize': 10}, va="top", ha="left", weight='bold')
+    #ax.text(1.3*min_xlim, 0.82*ymax, 'MC', {'color': 'r', 'fontsize': 10}, va="top", ha="left", weight='bold')
+    #ax.text(1.3*min_xlim, 0.77*ymax, r'$\chi^2/ndof = {:1.3f}/{}$ '.format(12.3456,len(yvals_m[int(xmin):int(xmax)])-1), {'color': 'r', 'fontsize': 9}, va="top", ha="left")
+    ax.text(1.3*min_xlim, 0.7*ymax, r'p0 = {:1.4f} $\pm$ {:1.4f}'.format(m_params[0][2], m_err[2]), {'color': 'r', 'fontsize': 9}, va="top", ha="left")
+    ax.text(1.3*min_xlim, 0.65*ymax, r'p1 = {:1.4f} $\pm$ {:1.4f}'.format(m_params[0][1], m_err[1]), {'color': 'r', 'fontsize': 9}, va="top", ha="left")
+    ax.text(1.3*min_xlim, 0.6*ymax, r'p2 = {:1.4f} $\pm$ {:1.4f}'.format(m_params[0][0], m_err[0]), {'color': 'r', 'fontsize': 9}, va="top", ha="left")
+    
+    fig.savefig("plots/Offset_pT_eta{}.pdf".format(str(etabins[nbin]).replace(".", "p")), bbox_inches='tight')
+    return d_params[0], m_params[0]
+
+def L1RCtxtfile(output, x_var, y_var, norm_var, hist_2d, xlabel, ylabel, xmin, xmax, R, outname):
+    
+    datatxtfile = open('payloads/'+outname+'_DATA_L1RC_AK4PFchs.txt','w')
+    mctxtfile = open('payloads/'+outname+'_MC_L1RC_AK4PFchs.txt','w')
+    
+    datatxtfile.write('{1\tJetEta\t3\tJetPt\tJetA\tRho\tmax(0.0001,1-(y/x)*([0]+[1]*(z-2.00)+[2]*pow(z-2.00,2)))\tCorrection L1FastJet}')
+    mctxtfile.write('{1\tJetEta\t3\tJetPt\tJetA\tRho\tmax(0.0001,1-(y/x)*([0]+[1]*(z-2.00)+[2]*pow(z-2.00,2)))\tCorrection L1FastJet}')
+    
+    area = math.pi*R*R
+    
+    for nbin in range(nEta):
+        x = abs(etabins[0]) - 0.5*abs(etabins[nbin]+etabins[nbin+1])
+        if (x < R):
+            theta = 2*math.acos(x/R)
+            area_seg = 0.5*R*R*theta - x*R*math.sin(theta/2)
+            area -= area_seg
+        
+        d_params, m_params = fitProfile(output, x_var, y_var, norm_var, hist_2d, xlabel, ylabel, nbin, xmin, xmax)
+        datatxtfile.write('\n{0:8}{1:8}{2:6}{3:6}{4:6}{5:6}{6:6}{7:6}{8:15}{9:15}{10:15}{11:15}'
+                      .format(etabins[nbin], etabins[nbin+1],
+                              9, 1, 3500, 0, 10, 0, 200,
+                              round(d_params[2]/area, 6) ,
+                              round(d_params[1]/area, 6),
+                              round(d_params[0]/area, 6)))
+        mctxtfile.write('\n{0:8}{1:8}{2:6}{3:6}{4:6}{5:6}{6:6}{7:6}{8:15}{9:15}{10:15}{11:15}'
+                      .format(etabins[nbin], etabins[nbin+1],
+                              9, 1, 3500, 0, 10, 0, 200,
+                              round(m_params[2]/area, 6) ,
+                              round(m_params[1]/area, 6),
+                              round(m_params[0]/area, 6)))
 
 def plotStack(output, x_var, y_var, norm_var, x_low, x_high, ylabel, flavor, ymax, ratioM):
     
@@ -78,6 +261,8 @@ def plotStack(output, x_var, y_var, norm_var, x_low, x_high, ylabel, flavor, yma
     ax.set_xticklabels([])
     ax.set_ylabel(ylabel)
     rax.grid()
+    ax.text(-5.2, 1.008*ymax, 'CMS', {'color': 'k', 'fontsize': 12, 'fontweight':'black', 'fontfamily':'sans'}, va="bottom", ha="left")
+    ax.text(5.2, 1.008*ymax, '2017 (13 TeV)', {'color': 'k', 'fontsize': 10}, va="bottom", ha="right")
     
     if flavor == 'all':
     
@@ -102,6 +287,7 @@ def plotStack(output, x_var, y_var, norm_var, x_low, x_high, ylabel, flavor, yma
                      marker=["*", "^"], ax=ax, label=['EM Deposits', 'Hadron Deposits'],
                      fillstyle='none', color='black', markersize=5,)
 
+        ax.legend()
         handles, labels = ax.get_legend_handles_labels()
         ax.legend([(handles[i], handles[8+i][0]) for i in range(6)],
                  ['Assoc. Charged Hadrons', 'Unssoc. Charged Hadrons', 'Neutral Hadrons', 'Photons',
@@ -218,156 +404,6 @@ def plotStack(output, x_var, y_var, norm_var, x_low, x_high, ylabel, flavor, yma
     rax.set_xlim(-5.2, 5.2)
     rax.set_xlabel(r'$\eta$')
     rax.set_ylabel('Data/MC')
-    plt.show()
 
-def plotHist(output, variable, xlabel):
-    scales = output[variable].integrate(variable).values()
-    data_scale = scales['Data',]
-    mc_scale = scales['MC',]
-    scales['Data'] = 1/data_scale
-    scales['MC'] = 1/mc_scale
-    del scales['Data',]
-    del scales['MC',]
-    output[variable].scale(scales, axis='dataset')
-    fig, ax = plt.subplots(figsize=(5, 5))
-    ax = hist.plot1d(output[variable],overlay='dataset')
-    ax.set_xlabel(xlabel)
-    ax.set_ylabel('')
-    scales['Data'] = data_scale
-    scales['MC'] = mc_scale
-    output[variable].scale(scales, axis='dataset')
-
-def plotProfile(output, x_var, hist_2d, xlow, xhigh, xlabel, ylabel):
-    fig, (ax, rax) = plt.subplots(
-        nrows=2,
-        ncols=1,
-        figsize=(5,5),
-        gridspec_kw={"height_ratios": (3, 1)},
-        sharex=True
-    )
-    fig.subplots_adjust(hspace=.07)
-    num1 = output[hist_2d].integrate('dataset','Data') 
-    denom1 = output[x_var].integrate('dataset','Data') 
-    hist.plotratio(num1, denom1, unc='num', ax=ax,
-                   error_opts={'marker':'o', 'markersize': 3.,
-                               'markeredgecolor':'k', 'color':'k',
-                               'elinewidth': 0.5, },label='Data', clear=False,)
-    num2 = output[hist_2d].integrate('dataset','MC') 
-    denom2 = output[x_var].integrate('dataset','MC') 
-    hist.plotratio(num2, denom2, unc='num',ax=ax,
-                   error_opts={'marker':'o', 'markersize': 3.,
-                               'markeredgecolor':'r', 'color':'none',
-                               'elinewidth': 1.0, },label='MC',clear=False)
-    ax.set_xlim(xlow, xhigh)
-    ax.set_ylim(0, 60)
-    rax.set_ylim(0.7, 1.3)
-    ax.set_xlabel(None)
-    rax.set_xlabel(xlabel)
-    rax.set_ylabel('Data/MC')
-    ax.set_ylabel(ylabel)
-    ax.grid(color='b', ls = '-.', lw = 0.25)
-    ax.legend()
-    nbins = len(output[x_var].values()['Data',])
-    bin_center = 0.5*(np.linspace(0,nbins/2,nbins+1)[:-1]+np.linspace(0,nbins/2,nbins+1)[1:])
-    im = rax.scatter(bin_center,(num1.values()[()]*denom2.values()[()])/(num2.values()[()]*denom1.values()[()]),
-                     s=5, marker='o', facecolors='none', edgecolor='k')
-    im = rax.plot(bin_center, np.ones(len(bin_center)), '--', color='gray')
-
-def func(x, a, b, c):
-    return (a * x**2) + (b*x) + c
-
-def fitProfile(output, x_var, y_var, norm_var, hist_2d, xlabel, ylabel, nbin, xmin, xmax):
-    '''Need to add text in the plot from fitting and display eta range.'''
-    fig, (ax, rax) = plt.subplots(
-        nrows=2,
-        ncols=1,
-        figsize=(5,5),
-        gridspec_kw={"height_ratios": (3, 1)},
-        sharex=True
-    )
-    fig.subplots_adjust(hspace=.07)
-    
-    # print(etabins[nbin],'-',etabins[nbin+1])
-    eta_range = slice(etabins[nbin], etabins[nbin+1])
-    offset_vs_eta_data = output[y_var].integrate('dataset','Data').integrate('eta',eta_range )
-    norm_data = ((output[norm_var].integrate('dataset','Data')).integrate('eta',eta_range ).integrate('flavor','chm')).values()[()]
-    offset_v_eta_data = (offset_vs_eta_data.remove(["lep","untrk", 'chm'],"flavor")).integrate('flavor')
-
-    offset_vs_eta_mc = output[y_var].integrate('dataset','MC').integrate('eta',eta_range )
-    norm_mc = (((output[norm_var].integrate('dataset','MC')).integrate('eta',eta_range ).integrate('flavor','chm')).values()[()])
-    offset_v_eta_mc = (offset_vs_eta_mc.remove(["lep","untrk", 'chm'],"flavor")).integrate('flavor')
-    
-    '''converting mu to rho for x axis values'''
-    num1 = (output['p_rho_nPU']).integrate('dataset','Data') 
-    denom1 = (output['nPU']).integrate('dataset','Data') 
-    x_data = np.where(denom1.values()[()]>0., num1.values()[()]/denom1.values()[()], 0)
-    
-    num2 = (output['p_rho_nPU']).integrate('dataset','MC') 
-    denom2 = (output['nPU']).integrate('dataset','MC') 
-    x_mc = np.where(denom2.values()[()]>0., num2.values()[()]/denom2.values()[()], 0)
-    
-    nbins = len(output[x_var].values()['Data',])
-    bin_center = (0.5*(np.linspace(0,nbins/2,nbins+1)[:-1]+np.linspace(0,nbins/2,nbins+1)[1:])).astype(int)
-    yvals_d = (offset_v_eta_data.values()[()]* (1/norm_data))
-    yvals_m = (offset_v_eta_mc.values()[()]* (1/norm_mc))
-    yerr_d = (offset_v_eta_data.values(sumw2=True)[()])[1]* (1/norm_data)
-    yerr_m = (offset_v_eta_mc.values(sumw2=True))[()][1]* (1/norm_mc)
-    im = ax.scatter(x_data, yvals_d, label='Data', s=15, facecolors='k', edgecolors='k')
-    im = ax.scatter(x_mc, yvals_m, label='MC', s=15, facecolors='none', edgecolors='r')
-    
-    min_xlim=np.min(x_data[2*xmin:2*xmax+1]) if np.min(x_data[2*xmin:2*xmax+1])<np.min(x_mc[2*xmin:2*xmax+1]) else np.min(x_mc[2*xmin:2*xmax+1])
-    max_xlim=np.max(x_data[2*xmin:2*xmax+1]) if np.max(x_data[2*xmin:2*xmax+1])>np.max(x_mc[2*xmin:2*xmax+1]) else np.max(x_mc[2*xmin:2*xmax+1])
-    ax.set_xlim(min_xlim, max_xlim)
-    
-    ymax1 = np.max(yvals_d[int(2*xmin):int(2*xmax)+1])
-    ymax2 = np.max(yvals_m[int(2*xmin):int(2*xmax)+1])
-    ymax = ymax1 if(ymax1>ymax2) else ymax2
-    ax.set_ylim(0, 1.2*ymax)
-    ax.set_ylabel(ylabel)
-
-    im = rax.scatter(x_data, yvals_d/yvals_m,
-                     facecolors='none', edgecolors='k', s=15)
-    im = rax.plot(bin_center, np.ones(len(bin_center)), '--', color='k')
-    rax.set_ylim(0.5, 1.6)
-    rax.set_xlabel(xlabel)
-    rax.set_ylabel('Data/MC')
-    
-    
-    d_params= optimize.curve_fit(func, x_data[int(2*xmin):int(2*xmax)+1],
-                                                   yvals_d[int(2*xmin):int(2*xmax)+1],
-                                                   p0=[2, 2, 2], full_output=True)
-    m_params= optimize.curve_fit(func, x_mc[int(2*xmin):int(2*xmax)+1],
-                                                       yvals_m[int(2*xmin):int(2*xmax)+1],
-                                                       p0=[2, 2, 2], full_output=True)
-    d_err = np.sqrt(np.diag(d_params[1]))
-    m_err = np.sqrt(np.diag(m_params[1]))
-    # print(d_err, m_err)
-
-    #print(yerr_d[int(2*xmin):int(2*xmax)+1])
-    #print(yerr_m[int(2*xmin):int(2*xmax)+1])
-    
-    chisq_d = np.sum(((yvals_d[int(2*xmin):int(2*xmax)+1] -
-                    func( bin_center[int(2*xmin):int(2*xmax)+1], d_params[0][0], d_params[0][1], d_params[0][2]))
-                     /yerr_d[int(2*xmin):int(2*xmax)+1])**2)
-    chisq_m = np.sum(((yvals_m[int(2*xmin):int(2*xmax)+1] -
-                    func( bin_center[int(2*xmin):int(2*xmax)+1], m_params[0][0], m_params[0][1], m_params[0][2]))
-                     /yerr_m[int(2*xmin):int(2*xmax)+1])**2)
-    # print (chisq_d, chisq_m)
-
-    ax.plot(bin_center[int(xmin):int(2*xmax)+1], func( bin_center[int(xmin):int(2*xmax)+1], d_params[0][0], d_params[0][1], d_params[0][2]), 'k')
-    ax.plot(bin_center[int(xmin):int(2*xmax)+1], func( bin_center[int(xmin):int(2*xmax)+1], m_params[0][0], m_params[0][1], m_params[0][2]), 'r')
-    
-    ax.text(min_xlim, 1.21*ymax, 'CMS', {'color': 'k', 'fontsize': 12, 'fontweight':'black', 'fontfamily':'sans'}, va="bottom", ha="left")
-    ax.text(max_xlim, 1.21*ymax, r'AK4 PFchs {} $\leq$ $\eta$ $\leq$ {}'.format(etabins[nbin],etabins[nbin+1]), {'color': 'k', 'fontsize': 10}, va="bottom", ha="right")
-    ax.text(1.3*min_xlim, 1.05*ymax, 'Data', {'color': 'k', 'fontsize': 10}, va="top", ha="left", weight='bold')
-    #ax.text(1.3*min_xlim, 1.1*ymax, 'Data', {'color': 'k', 'fontsize': 10}, va="top", ha="left", weight='bold')
-    #ax.text(1.3*min_xlim, 1.05*ymax, r'$\chi^2/ndof = {:1.3f}/{}$ '.format(12.3456,len(yvals_d[int(xmin):int(xmax)])-1), {'color': 'k', 'fontsize': 9}, va="top", ha="left")
-    ax.text(1.3*min_xlim, 0.98*ymax, r'p0 = {:1.3f} $\pm$ {:1.3f}'.format(d_params[0][2], d_err[2]), {'color': 'k', 'fontsize': 9}, va="top", ha="left")
-    ax.text(1.3*min_xlim, 0.93*ymax, r'p1 = {:1.3f} $\pm$ {:1.3f}'.format(d_params[0][1], d_err[1]), {'color': 'k', 'fontsize': 9}, va="top", ha="left")
-    ax.text(1.3*min_xlim, 0.88*ymax, r'p2 = {:1.3f} $\pm$ {:1.3f}'.format(d_params[0][0], d_err[0]), {'color': 'k', 'fontsize': 9}, va="top", ha="left")
-    ax.text(1.3*min_xlim, 0.77*ymax, 'MC', {'color': 'r', 'fontsize': 10}, va="top", ha="left", weight='bold')
-    #ax.text(1.3*min_xlim, 0.82*ymax, 'MC', {'color': 'r', 'fontsize': 10}, va="top", ha="left", weight='bold')
-    #ax.text(1.3*min_xlim, 0.77*ymax, r'$\chi^2/ndof = {:1.3f}/{}$ '.format(12.3456,len(yvals_m[int(xmin):int(xmax)])-1), {'color': 'r', 'fontsize': 9}, va="top", ha="left")
-    ax.text(1.3*min_xlim, 0.7*ymax, r'p0 = {:1.3f} $\pm$ {:1.3f}'.format(m_params[0][2], m_err[2]), {'color': 'r', 'fontsize': 9}, va="top", ha="left")
-    ax.text(1.3*min_xlim, 0.65*ymax, r'p1 = {:1.3f} $\pm$ {:1.3f}'.format(m_params[0][1], m_err[1]), {'color': 'r', 'fontsize': 9}, va="top", ha="left")
-    ax.text(1.3*min_xlim, 0.6*ymax, r'p2 = {:1.3f} $\pm$ {:1.3f}'.format(m_params[0][0], m_err[0]), {'color': 'r', 'fontsize': 9}, va="top", ha="left")
+    typeplt="_geo" if "geo" in y_var else ""
+    fig.savefig("plots/stack{}_{}.pdf".format(typeplt, flavor), bbox_inches='tight')
